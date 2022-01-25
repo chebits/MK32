@@ -1,14 +1,7 @@
 FROM espressif/idf:release-v4.4
-RUN mkdir /home/workspace
-RUN mkdir /home/workspace/cmakebuild
-COPY components /home/workspace/components
-COPY main /home/workspace/main
-COPY CMakeLists.txt /home/workspace/
-COPY partitions.csv /home/workspace/
-COPY README.md /home/workspace/
-COPY sdkconfig.defaults /home/workspace/
 WORKDIR /home/workspace/cmakebuild
 RUN /bin/bash -c "source /opt/esp/idf/export.sh"
+RUN apt -y update && apt -y install usbutils neovim
 ENV PATH="/opt/esp/tools/cmake/3.20.3/bin:${PATH}"
 ENV PATH="/opt/esp/idf/components/esptool_py/esptool:${PATH}"
 ENV PATH="/opt/esp/idf/components/espcoredump:${PATH}"
@@ -24,5 +17,3 @@ ENV PATH="/opt/esp/tools/cmake/3.20.3/bin:${PATH}"
 ENV PATH="/opt/esp/tools/openocd-esp32/v0.10.0-esp32-20211111/openocd-esp32/bin:${PATH}"
 ENV PATH="/opt/esp/python_env/idf4.4_py3.8_env/bin:${PATH}"
 ENV PATH="/opt/esp/idf/tools:${PATH}"
-RUN cmake /home/workspace/
-RUN make
