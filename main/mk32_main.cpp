@@ -29,6 +29,7 @@
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_debug_helpers.h"
 #include "nvs_flash.h"
 #include "esp_bt.h"
 #include "esp_bt_main.h"
@@ -45,11 +46,8 @@
 
 //MK32 functions
 #include "matrix.h"
-#include "keypress_handles.c"
 #include "keyboard_config.h"
-#include "espnow_receive.h"
-#include "espnow_send.h"
-#include "r_encoder.h"
+#include "keypress_handles.c"
 #include "battery_monitor.h"
 #include "nvs_funcs.h"
 #include "nvs_keymaps.h"
@@ -63,7 +61,6 @@
 #include "plugins.h"
 
 static config_data_t config;
-QueueHandle_t espnow_recieve_q;
 
 bool DEEP_SLEEP = true; // flag to check if we need to go to deep sleep
 
@@ -127,124 +124,65 @@ extern "C" void battery_reports(void *pvParameters) {
 	}
 }
 
+extern "C" void send_report_now() {
+	uint8_t ble_report[REPORT_LEN] = { 0 };
+  DEEP_SLEEP = false;
+  void* pReport;
+  current_report[0] = modifier;
+  memcpy(ble_report, current_report, get_report_size());
+
+#ifndef NKRO
+  uint8_t trunc_report[REPORT_LEN] = {0};
+  trunc_report[0] = ble_report[0];
+  trunc_report[1] = ble_report[1];
+
+  uint16_t cur_index = 2;
+  //Phone's mtu size is usuaully limited to 20 bytes
+  for(uint16_t i = 2; i < REPORT_LEN && cur_index < TRUNC_SIZE; ++i){
+    if(ble_report[i] != 0){
+      trunc_report[cur_index] =current_report[i];
+      ++cur_index;
+    }
+  }
+
+  pReport = (void *) &trunc_report;
+#endif
+#ifdef NKRO
+  pReport = (void *) &ble_report;
+#endif
+
+  if(BLE_EN == 1) {
+    xQueueSend(keyboard_q, pReport, (TickType_t) 0);
+    esp_backtrace_print(5);
+    ESP_LOGI("BLE", "Sent keyboard report");
+  }
+  if(input_str_q != NULL){
+    xQueueSend(input_str_q, pReport, (TickType_t) 0);
+  }
+}
+
 
 //How to handle key reports
 extern "C" void key_reports(void *pvParameters) {
 	// Arrays for holding the report at various stages
 	uint8_t past_report[REPORT_LEN] = { 0 };
-	uint8_t report_state[REPORT_LEN];
-
 
 
 	while (1) {
-		memcpy(report_state, check_key_state(layouts[current_layout]),
-				sizeof report_state);
-
 		//Do not send anything if queues are uninitialized
 		if (mouse_q == NULL || keyboard_q == NULL || joystick_q == NULL) {
 			ESP_LOGE(KEY_REPORT_TAG, "queues not initialized");
 			continue;
 		}
 
-		//Check if the report was modified, if so send it
-		if (memcmp(past_report, report_state, sizeof past_report) != 0) {
-			DEEP_SLEEP = false;
-			void* pReport;
-			memcpy(past_report, report_state, sizeof past_report);
-
-#ifndef NKRO
-			uint8_t trunc_report[REPORT_LEN] = {0};
-			trunc_report[0] = report_state[0];
-			trunc_report[1] = report_state[1];
-
-			uint16_t cur_index = 2;
-			//Phone's mtu size is usuaully limited to 20 bytes
-			for(uint16_t i = 2; i < REPORT_LEN && cur_index < TRUNC_SIZE; ++i){
-				if(report_state[i] != 0){
-					trunc_report[cur_index] = report_state[i];
-					++cur_index;
-				}
-			}
-
-			pReport = (void *) &trunc_report;
-#endif
-#ifdef NKRO
-			pReport = (void *) &report_state;
-#endif
-
-			if(BLE_EN == 1){
-				xQueueSend(keyboard_q, pReport, (TickType_t) 0);
-			}
-			if(input_str_q != NULL){
-				xQueueSend(input_str_q, pReport, (TickType_t) 0);
-			}
-		}
-
+    check_key_state();
+    if (memcmp(past_report, current_report, sizeof past_report) != 0) {
+      memcpy(past_report, current_report, sizeof past_report);
+    }
 	}
 
 }
 
-//Handling rotary encoder
-extern "C" void encoder_report(void *pvParameters) {
-	uint8_t encoder_state = 0;
-	uint8_t past_encoder_state = 0;
-
-	while (1) {
-		encoder_state = r_encoder_state();
-		if (encoder_state != past_encoder_state) {
-			DEEP_SLEEP = false;
-			r_encoder_command(encoder_state, encoder_map[current_layout]);
-			past_encoder_state = encoder_state;
-		}
-
-	}
-}
-
-//Handling rotary encoder for slave pad
-extern "C" void slave_encoder_report(void *pvParameters) {
-	uint8_t encoder_state = 0;
-	uint8_t past_encoder_state = 0;
-
-	while (1) {
-		encoder_state = r_encoder_state();
-		if (encoder_state != past_encoder_state) {
-			DEEP_SLEEP = false;
-			xQueueSend(espnow_encoder_send_q, (void*) &encoder_state,
-					(TickType_t) 0);
-			past_encoder_state = encoder_state;
-		}
-
-	}
-}
-
-//Function for sending out the modified matrix
-extern "C" void slave_scan(void *pvParameters) {
-
-	uint8_t PAST_MATRIX[MATRIX_ROWS][MATRIX_COLS] = { 0 };
-
-	while (1) {
-		scan_matrix();
-		if (memcmp(&PAST_MATRIX, &MATRIX_STATE, sizeof MATRIX_STATE) != 0) {
-			DEEP_SLEEP = false;
-			memcpy(&PAST_MATRIX, &MATRIX_STATE, sizeof MATRIX_STATE);
-			xQueueSend(espnow_matrix_send_q, (void*) &MATRIX_STATE,
-					(TickType_t) 0);
-
-		}
-	}
-}
-
-//Update the matrix state via reports recieved by espnow
-extern "C" void espnow_update_matrix(void *pvParameters) {
-
-	uint8_t CURRENT_MATRIX[MATRIX_ROWS][MATRIX_COLS] = { 0 };
-	while (1) {
-		if (xQueueReceive(espnow_receive_q, &CURRENT_MATRIX, 10000)) {
-			DEEP_SLEEP = false;
-			memcpy(&SLAVE_MATRIX_STATE, &CURRENT_MATRIX, sizeof CURRENT_MATRIX);
-		}
-	}
-}
 //what to do after waking from deep sleep, doesn't seem to work after updating esp-idf
 //extern "C" void RTC_IRAM_ATTR esp_wake_deep_sleep(void) {
 //    rtc_matrix_deinit();;
@@ -333,7 +271,6 @@ extern "C" void app_main() {
 
 	//Loading layouts from nvs (if found)
 #ifdef MASTER
-	nvs_load_layouts();
 	//activate keyboard BT stack
 	halBLEInit(1, 1, 1, 0);
 	ESP_LOGI("HIDD", "MAIN finished...");

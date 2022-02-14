@@ -19,7 +19,4 @@ void plugin_launcher(uint16_t keycode){
         default:
             break;
     }
-
-
-
 }

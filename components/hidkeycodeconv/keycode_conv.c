@@ -6,6 +6,7 @@
 #include "driver/gpio.h"
 #include "keymap.h"
 #include "key_definitions.h"
+#include "usb_hid_keys.h"
 
 #define TAG "KEY TO CHAR"
 
@@ -120,7 +121,7 @@ char* input_string(void) {
 
 	uint8_t report_state[REPORT_LEN];
 	int i = 0;
-	while (keycode != KC_ENT) {
+	while (keycode != KEY_ENTER) {
 		if (xQueueReceive(input_str_q, &report_state, portMAX_DELAY)) {
 			for (int key = 2; key < REPORT_LEN; key++) {
 

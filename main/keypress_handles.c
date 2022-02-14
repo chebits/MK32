@@ -22,12 +22,17 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "keymap.c"
+#include "keymap.h"
 #include "matrix.h"
 #include "hal_ble.h"
 #include "oled_tasks.h"
 #include "nvs_keymaps.h"
 #include "plugin_manager.h"
+#include "keyboard_config.h"
+#include "key_definitions.h"
+
+#include <stdlib.h>
+#include "mk32_main.h"
 
 #define KEY_PRESS_TAG "KEY_PRESS"
 
@@ -37,6 +42,7 @@
  */
 
 uint8_t KEY_STATE[MATRIX_ROWS][KEYMAP_COLS] = { 0 };
+KEY_HANDLER *pushed[MATRIX_ROWS][KEYMAP_COLS] = { 0 };
 uint16_t led_status = 0;
 uint8_t modifier = 0;
 uint16_t keycode = 0;
@@ -52,12 +58,12 @@ uint8_t layer_hold_flag = 0;
 uint8_t prev_layout = 0;
 
 // checking if a modifier key was pressed
-uint16_t check_modifier(uint16_t key) {
+uint8_t check_modifier(uint16_t key) {
 
 	uint8_t cur_mod = 0;
 	// these are the modifier keys
-	if ((KC_LCTRL <= key) && (key <= KC_RGUI)) {
-		cur_mod = (1 << (key - KC_LCTRL));
+	if ((KEY_LEFTCTRL <= key) && (key <= KEY_RIGHTMETA)) {
+		cur_mod = (1 << (key - KEY_LEFTCTRL));
 		return cur_mod;
 	}
 	return 0;
@@ -68,51 +74,75 @@ uint16_t check_modifier(uint16_t key) {
 uint16_t check_led_status(uint16_t key) {
 
 	switch (key) {
-	case KC_NLCK:
+	case KEY_NUMLOCK:
 		return 1;
 
-	case KC_CAPS:
+	case KEY_CAPSLOCK:
 		return 2;
 
-	case KC_SLCK:
+	case KEY_SCROLLLOCK:
 		return 3;
 
 	}
 	return 0;
 }
 
-// what to do on a media key press
-void media_control_send(uint16_t keycode) {
+int findKeyPosition(uint8_t key) {
+  uint8_t offset = 0;
+  uint8_t skipped = 0;
+  int result = -1;
+  for (int i = 2; i < REPORT_LEN; i++) {
+    if (current_report[i]) {
+      if (skipped > 0) {
+        offset += skipped;
+        skipped = 0;
+      }
+      
+      if (offset > 0) {
+        current_report[i-offset] = current_report[i];
+        current_report[i] = 0;
+      }
 
-	uint8_t media_state[2] = { 0 };
-	if (keycode == KC_MEDIA_NEXT_TRACK) {
-		media_state[1] = 10;
-	}
-	if (keycode == KC_MEDIA_PREV_TRACK) {
-		media_state[1] = 111;
-	}
-	if (keycode == KC_MEDIA_STOP) {
-		media_state[1] = 12;
-	}
-	if (keycode == KC_MEDIA_PLAY_PAUSE) {
-		media_state[1] = 5;
-	}
-	if (keycode == KC_AUDIO_MUTE) {
-		media_state[1] = 1;
-	}
-	if (keycode == KC_AUDIO_VOL_UP) {
-		SET_BIT(media_state[0], 6);
-	}
-	if (keycode == KC_AUDIO_VOL_DOWN) {
-		SET_BIT(media_state[0], 7);
-	}
+      if (current_report[i - offset] == key) {
+        result = i - offset;
+      } 
+    } else {
+      skipped++;
+    }
+  }
+  if (!key) {
+    return REPORT_LEN - skipped;
+  }
 
-	xQueueSend(media_q, (void*) &media_state, (TickType_t) 0);
+  return result;
 }
 
-void media_control_release(uint16_t keycode) {
-	uint8_t media_state[2] = { 0 };
-	xQueueSend(media_q, (void*) &media_state, (TickType_t) 0);
+uint8_t get_report_size() {
+  int size = findKeyPosition(0);
+  if (size < 0) {
+    size = 0;
+  }
+
+  return size;
+}
+
+void set_key(uint8_t key) {
+  int ri = findKeyPosition(key);
+  if (ri == -1) {
+    ri = findKeyPosition(0);
+    current_report[ri] = key;
+  }
+  ESP_LOGI(KEY_PRESS_TAG, "Set key: %d (position: %d)", key, ri);
+  send_report_now();
+}
+
+void unset_key(uint8_t key) {
+  int ri = findKeyPosition(key);
+  if (ri != -1) {
+    current_report[ri] = 0;
+  }
+  ESP_LOGI(KEY_PRESS_TAG, "unSet key: %d (position: %d)", key, ri);
+  send_report_now();
 }
 
 //used for debouncing
@@ -121,195 +151,108 @@ static uint32_t millis() {
 }
 
 uint32_t prev_time = 0;
-// adjust current layer
-void layer_adjust(uint16_t keycode) {
-	uint32_t cur_time = millis();
-	if (cur_time - prev_time > DEBOUNCE) {
-		if (layer_hold_flag == 0) {
-			switch (keycode) {
-			case DEFAULT:
-				current_layout = 0;
-				break;
 
-			case LOWER:
-				if (current_layout == 0) {
-					current_layout = MAX_LAYER;
-					break;
-				}
-				current_layout--;
-				break;
+// set current layer
+void set_layer(uint8_t layer) {
+  current_layout = layer;
+}
 
-			case RAISE:
-				if (current_layout == MAX_LAYER) {
-					current_layout = 0;
-					break;
-				}
-				current_layout++;
-				break;
-			}
-#ifdef OLED_ENABLE
-			xQueueSend(layer_recieve_q, &current_layout, (TickType_t) 0);
-#endif
-			ESP_LOGI(KEY_PRESS_TAG, "Layer modified!, Current layer: %d ",
-					current_layout);
-		}
-	}
-	prev_time = cur_time;
+uint8_t get_layer() {
+  return current_layout;
+}
+
+uint8_t layer_stack[LAYERS] = {0};
+uint8_t layer_stack_top() {
+  for (int i = 0; i < LAYERS; i++) {
+    if (layer_stack[i] == 0) {
+      return i;
+    }
+  }
+
+  // stack overflow will override the last layer... or should I panic?
+  return 4;
+}
+
+void push_layer(uint8_t layer) {
+  uint8_t top = layer_stack_top();
+  layer_stack[top] = current_layout;
+  current_layout = layer;
+  ESP_LOGI("LAYER", "pushing layer %d to top %d", layer, top);
+}
+
+void pop_layer() {
+  uint8_t top = layer_stack_top();
+  ESP_LOGI("LAYER", "popping layer %d from top %d over %d", layer_stack[top], top, current_layout);
+  current_layout = layer_stack[top];
+  layer_stack[top] = 0;
+}
+
+uint8_t get_mods() {
+  return modifier;
+}
+
+void add_mods(uint8_t mods) {
+  modifier |= mods;
+  send_report_now();
+}
+
+void rm_mods(uint8_t mods) {
+  modifier ^= mods;
+  send_report_now();
 }
 
 uint8_t matrix_prev_state[MATRIX_ROWS][MATRIX_COLS] = { 0 };
 
 // checking the state of each key in the matrix
-uint8_t *check_key_state(uint16_t **keymap) {
-
+uint8_t *check_key_state() {
 	scan_matrix();
-	for (uint8_t pad = 0; pad < KEYPADS; pad++) {
+  uint8_t changeCount = 0;
+	for (uint8_t pad = 0; pad < KEYPADS && !changeCount; pad++) {
 
 		uint8_t matrix_state[MATRIX_ROWS][MATRIX_COLS] = { 0 };
 		memcpy(matrix_state, matrix_states[pad], sizeof(matrix_state));
 
-		for (uint8_t col = (MATRIX_COLS * pad); col < ((pad + 1) * (MATRIX_COLS)); col++) {
-			for (uint8_t row = 0; row < MATRIX_ROWS; row++) {
-				
-				//if there are no changes on this matrix position, skip to next position
-				if(matrix_state[row][col] == matrix_prev_state[row][col])	
-					continue;
 
-				uint16_t report_index = (2 + col + row * KEYMAP_COLS);
-				keycode = keymap[row][col];
+		for (uint8_t col = (MATRIX_COLS * pad); col < ((pad + 1) * (MATRIX_COLS)) && !changeCount; col++) {
+			for (uint8_t row = 0; row < MATRIX_ROWS && !changeCount; row++) {
+				uint8_t pressed = matrix_state[row][col];
+        uint8_t changed = pressed != (matrix_prev_state[row][col]);
+        uint8_t layer = get_layer();
+				KEY_HANDLER *handler = KEYMAP[layer][row][col];
+        
+        if (handler == NULL) {
+          // KC_TRNS :)
+          for (int lst = layer_stack_top(); handler == NULL && lst > -1; lst--) {
+//            ESP_LOGI(KEY_PRESS_TAG, "%d,%d,%d: TRNS drop to layer %d", layer, row, col, lst);
+            handler = KEYMAP[layer_stack[lst]][row][col];
+          }
+        }
 
-				//checking if the keycode is transparent
-				if (keycode == KC_TRNS) {
-					if (current_layout == 0) {
-						keycode = *default_layouts[MAX_LAYER][row][col];
-					} else {
-						keycode =
-								*default_layouts[current_layout - 1][row][col];
-					}
-				}
-
-				led_status = check_led_status(keycode);
-				if (matrix_state[row][col - MATRIX_COLS * pad] == 1) {
-
-
-					//checking for function
-					if (keycode >= PLUGIN_BASE_VAL){
-						plugin_launcher(keycode);
-						continue;
-					}
-					//checking for layer hold
-					if ((keycode >= LAYER_HOLD_BASE_VAL)
-							&& (keycode <= LAYER_HOLD_MAX_VAL)) {
-						if (layer_hold_flag == 0) {
-							prev_layout = current_layout;
-							current_layout = (keycode - LAYER_HOLD_BASE_VAL);
-							layer_hold_flag = 1;
-#ifdef OLED_ENABLE
-						xQueueSend(layer_recieve_q, &current_layout,
-								(TickType_t) 0);
-#endif
-						ESP_LOGI(KEY_PRESS_TAG,
-								"Layer modified!, Current layer: %d ",
-								current_layout);
-						}
-
-						continue;
-
-					}
-
-					// checking for layer adjust keycodes
-					if ((keycode >= LAYERS_BASE_VAL)
-							&& (keycode < MACRO_BASE_VAL)) {
-						layer_adjust(keycode);
-						continue;
-					}
-
-					// checking for macros
-					if ((keycode >= MACRO_BASE_VAL)
-							&& (keycode <= LAYER_HOLD_BASE_VAL)) {
-						for (uint8_t i = 0; i < 3; i++) {
-							uint16_t key = macros[MACRO_BASE_VAL - keycode][i];
-							current_report[REPORT_LEN - 1 - i] = key;
-							modifier |= check_modifier(key);
-							printf("\nmodifier:%d", modifier);
-						}
-						continue;
-					}
-
-					// checking for media control keycodes
-					if ((keycode >= KC_MEDIA_NEXT_TRACK)
-							&& (keycode <= KC_AUDIO_VOL_DOWN)) {
-						media_control_send(keycode);
-					}
-
-					// checking for system control keycodes
-					//				if((keycode>=0XA8)&&(keycode<=0XA7)){
-					//					system_control(keycode);
-					//					continue;
-					//				}
-
-					if (current_report[report_index] == 0) {
-						modifier |= check_modifier(keycode);
-						current_report[report_index] = keycode;
-
-					}
-				}
-				if (matrix_state[row][col - MATRIX_COLS * pad] == 0) {
-
-					//checking for layer hold release
-					if ((layouts[prev_layout][row][col] >= LAYER_HOLD_BASE_VAL)
-							&& (keycode <= LAYER_HOLD_MAX_VAL)
-							&& (layer_hold_flag == 1)) {
-						current_layout = 0;
-						layer_hold_flag = 0;
-#ifdef OLED_ENABLE
-						xQueueSend(layer_recieve_q, &current_layout,
-								(TickType_t) 0);
-#endif
-						ESP_LOGI(KEY_PRESS_TAG,
-								"Layer modified!, Current layer: %d ",
-								current_layout);
-					}
-
-					//checking if macro was released
-					if ((keycode >= MACRO_BASE_VAL)
-							&& (keycode <= LAYER_HOLD_BASE_VAL)) {
-						for (uint8_t i = 0; i < 3; i++) {
-							uint16_t key = macros[MACRO_BASE_VAL - keycode][i];
-							current_report[REPORT_LEN - 1 - i] = 0;
-							modifier &= ~check_modifier(key);
-						}
-					}
-
-					if (current_report[report_index] != 0) {
-						if (led_status != 0) {
-							led_status = 0;
-						}
-
-						modifier &= ~check_modifier(keycode);
-						current_report[KEY_STATE[row][col]] = 0;
-						current_report[report_index] = 0;
-
-						// checking for media control keycodes
-						if ((keycode >= KC_MEDIA_NEXT_TRACK)
-								&& (keycode <= KC_AUDIO_VOL_DOWN)) {
-							media_control_release(keycode);
-						}
-					}
-
-					// checking for system control keycodes
-					//				if((keycode>=0XA8)&&(keycode<=0XA7)){
-					//					system_control_release(keycode);
-					//					continue;
-					//				}
-
-				}
+        if (changed) {
+          changeCount++;
+          ESP_LOGI(KEY_PRESS_TAG, "%d,%d,%d (%p) is now %d", layer, col, row, handler, pressed);
+          if (pressed) {
+            pushed[row][col] = handler;
+          } else if (pushed[row][col] != 0) {
+            handler = pushed[row][col];
+//            ESP_LOGI(KEY_PRESS_TAG, "Restored pressed handler for %d,%d", row, col);
+            pushed[row][col] = 0;
+          }
+        } else if (pushed[row][col] != 0) {
+//          ESP_LOGI(KEY_PRESS_TAG, "Restored pressed handler for %d,%d", row, col);
+          handler = pushed[row][col];
+        }
+        
+        handler(pressed, changed);
 			}
 		}
 		memcpy(matrix_prev_state, matrix_state, sizeof(matrix_state));
 	}
 	current_report[0] = modifier;
 	current_report[1] = led_status;
+  if (changeCount > 0) {
+    ESP_LOGI(KEY_PRESS_TAG, "change count: %d", changeCount);
+  }
 	return current_report;
 
 }

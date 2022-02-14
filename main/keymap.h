@@ -9,10 +9,9 @@
 #define MAIN_KEYMAP_H_
 
 #include "keyboard_config.h"
+#include "keypress_handles.h"
 
-extern uint16_t (*default_layouts[])[MATRIX_ROWS][KEYMAP_COLS];
 
-extern uint16_t default_encoder_map[LAYERS][ENCODER_SIZE];
-extern uint16_t default_slave_encoder_map[LAYERS][ENCODER_SIZE];
+extern KEY_HANDLER *KEYMAP[LAYERS][MATRIX_ROWS][KEYMAP_COLS];
 
 #endif /* MAIN_KEYMAP_H_ */
