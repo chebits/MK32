@@ -9,4 +9,4 @@ https://reddit.com/r/blink_keebs
 * Run docker container with build environment using `./run.sh`
 * Inside the container run `make flash`
 
-use `ESPBAUD= make monitor` to monitor the keyboard firmware debug output over serial connection.
+use `ESPBAUD= make monitor` to monitor debug output over the serial connection.
