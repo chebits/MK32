@@ -295,4 +295,15 @@ LSFT(KC_PIPE, KC_YEN);
 LSFT(KC_UNDS, KC_MINUS);
 
 LSFT(KC_TILD, KC_GRV);
+
+uint8_t isModifier(KEY_HANDLER *key) {
+  return key == KC_LSHIFT ||
+    key == KC_RSHIFT ||
+    key == KC_LCTRL ||
+    key == KC_RCTRL ||
+    key == KC_LALT ||
+    key == KC_RALT ||
+    key == KC_LGUI ||
+    key == KC_RGUI;
+}
 #endif

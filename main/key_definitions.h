@@ -55,6 +55,7 @@ extern uint32_t holdStart[TAP_HOLD_BUFFER];
 extern uint8_t sentHelds[TAP_HOLD_BUFFER];
 extern uint8_t tapCount;
 int8_t findTapCode(KEY_HANDLER *tap);
+uint8_t isModifier(KEY_HANDLER *key);
 
 #define MILLIS esp_timer_get_time() / 1000
 
@@ -64,6 +65,7 @@ int8_t findTapCode(KEY_HANDLER *tap);
     if (pressed) { \
       idx = findTapCode(TAP); \
       uint32_t tapInterval = MILLIS - holdStart[idx]; \
+      uint8_t ismod = isModifier(HOLD); \
       if (idx == -1) { \
         idx = findTapCode(0); \
         tapCodes[idx] = TAP; \
@@ -71,7 +73,8 @@ int8_t findTapCode(KEY_HANDLER *tap);
         sentHelds[idx] = 0; \
         tapCount = 0; \
         ESP_LOGI("KEYDEF", "%s hold init %s at %p[%d]: %p %d", #NAME, #HOLD, tapCodes, idx, tapCodes[idx], holdStart[idx]); \
-      } else if ((tapInterval > TAP_HOLD_THRESHOLD)) { \
+      } \
+      if (ismod || (tapInterval > TAP_HOLD_THRESHOLD) || tapCount) { \
         /* setting modifiers */ \
         if (!sentHelds[idx]) { \
           ESP_LOGI("KEYDEF", "%s hold start %s at %d", #NAME, #HOLD, idx); \
