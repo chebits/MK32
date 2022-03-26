@@ -21,6 +21,14 @@ void KC_NO(uint8_t pressed, uint8_t changed) {
 
 }
 
+uint8_t find_hold(KEY_HANDLER *hold) {
+  for (uint8_t i = 0; i < TAP_HOLD_BUFFER; i++) {
+    if (holdCodes[i] == hold) {
+      return i;
+    }
+  }
+  return -1;
+}
 
 void KC_GESC(uint8_t pressed, uint8_t changed) {
   if (!changed) {
@@ -35,20 +43,15 @@ void KC_GESC(uint8_t pressed, uint8_t changed) {
   }
 }
 
-KEY_HANDLER *tapCodes[TAP_HOLD_BUFFER] = {0}; 
+uint32_t tapCodes[TAP_HOLD_BUFFER] = {0}; 
+KEY_HANDLER *holdCodes[TAP_HOLD_BUFFER] = {0};
 uint32_t holdStart[TAP_HOLD_BUFFER] = {0};
 uint8_t sentHelds[TAP_HOLD_BUFFER] = {0};
+uint32_t delayedTaps[TAP_HOLD_BUFFER] = {0};
+uint32_t delayedUps[TAP_HOLD_BUFFER] = {0};
 
-int8_t findTapCode(KEY_HANDLER *tap) {
-  for (uint8_t i = 0; i < TAP_HOLD_BUFFER; i++) {
-    if (tapCodes[i] == tap) {
-//      ESP_LOGI(TAG, "found tap %p at %d", tap, i);
-      return i;
-    }
-  }
-//  ESP_LOGI(TAG, "DIDN'T FIND TAP %p in %p", tap, tapCodes);
-  return -1;
-}
+uint8_t delayTaps = 0;
+uint8_t upCount = 0;
 
 KCI(KC_A, KEY_A);
 KCI(KC_B, KEY_B);

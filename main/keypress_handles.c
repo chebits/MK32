@@ -127,22 +127,26 @@ uint8_t get_report_size() {
 }
 
 void set_key(uint8_t key) {
-  int ri = findKeyPosition(key);
-  if (ri == -1) {
-    ri = findKeyPosition(0);
-    current_report[ri] = key;
-  }
-  ESP_LOGI(KEY_PRESS_TAG, "Set key: %d (position: %d)", key, ri);
-  send_report_now();
+  if (!delayTaps) {
+    int ri = findKeyPosition(key);
+    if (ri == -1) {
+      ri = findKeyPosition(0);
+      current_report[ri] = key;
+    }
+    ESP_LOGI(KEY_PRESS_TAG, "Set key: %d (position: %d)", key, ri);
+    send_report_now();
+  } 
 }
 
 void unset_key(uint8_t key) {
-  int ri = findKeyPosition(key);
-  if (ri != -1) {
-    current_report[ri] = 0;
+  if (!delayTaps) {
+    int ri = findKeyPosition(key);
+    if (ri != -1) {
+      current_report[ri] = 0;
+    }
+    ESP_LOGI(KEY_PRESS_TAG, "unSet key: %d (position: %d)", key, ri);
+    send_report_now();
   }
-  ESP_LOGI(KEY_PRESS_TAG, "unSet key: %d (position: %d)", key, ri);
-  send_report_now();
 }
 
 //used for debouncing
@@ -203,6 +207,59 @@ void rm_mods(uint8_t mods) {
 
 uint8_t matrix_prev_state[MATRIX_ROWS][MATRIX_COLS] = { 0 };
 
+void handle_matrix_change(uint8_t row, uint8_t col, uint8_t pressed, uint8_t changed) {
+  uint8_t layer = get_layer();
+  KEY_HANDLER *handler = KEYMAP[layer][row][col];
+  
+  if (handler == NULL) {
+    // KC_TRNS :)
+    for (int lst = layer_stack_top(); handler == NULL && lst > -1; lst--) {
+//            ESP_LOGI(KEY_PRESS_TAG, "%d,%d,%d: TRNS drop to layer %d", layer, row, col, lst);
+      handler = KEYMAP[layer_stack[lst]][row][col];
+    }
+  }
+
+  if (changed) {
+    ESP_LOGI(KEY_PRESS_TAG, "%d,%d,%d (%p) is now %d", layer, col, row, handler, pressed);
+    if (pressed) {
+      pushed[row][col] = handler;
+    } else if (pushed[row][col] != 0) {
+      handler = pushed[row][col];
+//            ESP_LOGI(KEY_PRESS_TAG, "Restored pressed handler for %d,%d", row, col);
+      pushed[row][col] = 0;
+    }
+  } else if (pushed[row][col] != 0) {
+//          ESP_LOGI(KEY_PRESS_TAG, "Restored pressed handler for %d,%d", row, col);
+    handler = pushed[row][col];
+  }
+
+  
+  if (handler == NULL) {
+    ESP_LOGI(KEY_PRESS_TAG, "Undefined handler for position %d %d", row, col);
+    return;
+  }
+  handler(pressed, changed);
+}
+
+void send_delayed_taps() {
+  ESP_LOGI("KEYDEF", "Sending %d delayed taps", tapCount);
+  for (uint8_t i = 0; i < tapCount; i++) {
+    uint8_t row = delayedTaps[i] / MATRIX_COLS;
+    uint8_t col = delayedTaps[i] - row * MATRIX_COLS;
+    ESP_LOGI("KEYDEF", "Sending delayed tap: %d %d %d", i, row, col);
+    handle_matrix_change(row, col, true, true);
+  }
+  tapCount = 0;
+  ESP_LOGI("KEYDEF", "Sending %d delayed ups", upCount);
+  for (uint8_t i = 0; i < upCount; i++) {
+    uint8_t row = delayedUps[i] / MATRIX_COLS;
+    uint8_t col = delayedUps[i] - row * MATRIX_COLS;
+    ESP_LOGI("KEYDEF", "Sending delayed up: %d %d %d", i, row, col);
+    handle_matrix_change(row, col, false, true);
+  }
+  upCount = 0;
+}
+
 // checking the state of each key in the matrix
 uint8_t *check_key_state() {
 	scan_matrix();
@@ -217,33 +274,24 @@ uint8_t *check_key_state() {
 			for (uint8_t row = 0; row < MATRIX_ROWS && !changeCount; row++) {
 				uint8_t pressed = matrix_state[row][col];
         uint8_t changed = pressed != (matrix_prev_state[row][col]);
-        uint8_t layer = get_layer();
-				KEY_HANDLER *handler = KEYMAP[layer][row][col];
-        
-        if (handler == NULL) {
-          // KC_TRNS :)
-          for (int lst = layer_stack_top(); handler == NULL && lst > -1; lst--) {
-//            ESP_LOGI(KEY_PRESS_TAG, "%d,%d,%d: TRNS drop to layer %d", layer, row, col, lst);
-            handler = KEYMAP[layer_stack[lst]][row][col];
+
+        if (delayTaps) {
+          if (changed) {
+            if (pressed) {
+              ESP_LOGI("KEYDEF", "delayed tap: %i %d %d", tapCount, row, col);
+              delayedTaps[tapCount++] = row * MATRIX_COLS + col;
+            } else {
+              ESP_LOGI("KEYDEF", "delayed up: %i %d %d", upCount, row, col);
+              delayedUps[upCount++] = row * MATRIX_COLS + col;
+            }
           }
-        }
+        } 
 
         if (changed) {
           changeCount++;
-          ESP_LOGI(KEY_PRESS_TAG, "%d,%d,%d (%p) is now %d", layer, col, row, handler, pressed);
-          if (pressed) {
-            pushed[row][col] = handler;
-          } else if (pushed[row][col] != 0) {
-            handler = pushed[row][col];
-//            ESP_LOGI(KEY_PRESS_TAG, "Restored pressed handler for %d,%d", row, col);
-            pushed[row][col] = 0;
-          }
-        } else if (pushed[row][col] != 0) {
-//          ESP_LOGI(KEY_PRESS_TAG, "Restored pressed handler for %d,%d", row, col);
-          handler = pushed[row][col];
         }
-        
-        handler(pressed, changed);
+
+        handle_matrix_change(row, col, pressed, changed);
 			}
 		}
 		memcpy(matrix_prev_state, matrix_state, sizeof(matrix_state));

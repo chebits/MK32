@@ -22,7 +22,7 @@
 #define QUANTUM_ENABLE
 #define GRAVE_ESC_ENABLE
 #define TAP_HOLD_BUFFER 5
-#define TAP_HOLD_THRESHOLD 100
+#define TAP_HOLD_THRESHOLD 300
 #define MAX_GLOBAL_HANDLERS 10
 
 #define MASTER  // undefine if you are not flashing the main controller

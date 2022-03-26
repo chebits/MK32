@@ -20,6 +20,7 @@ uint8_t get_mods();
 void add_mods(uint8_t mods);
 void rm_mods(uint8_t mods);
 uint8_t get_report_size();
+void send_delayed_taps();
 
 uint8_t get_layer();
 void push_layer(uint8_t layer);

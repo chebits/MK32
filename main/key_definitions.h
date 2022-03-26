@@ -14,7 +14,6 @@
   void NAME(uint8_t pressed, uint8_t changed) { \
     if (changed) { \
       if (pressed) { \
-        tapCount++; \
         ESP_LOGI("KEY_PRESS", "DOWN: %s", #NAME); \
         set_key(CODE); \
       } else { \
@@ -50,12 +49,19 @@
 #define RSFT(NAME, KEY) MKC(NAME, KEY_MOD_RSHIFT, KEY)
 
 
-extern KEY_HANDLER *tapCodes[TAP_HOLD_BUFFER];
+extern uint32_t tapCodes[TAP_HOLD_BUFFER];
+extern KEY_HANDLER *holdCodes[TAP_HOLD_BUFFER];
 extern uint32_t holdStart[TAP_HOLD_BUFFER];
+extern uint32_t delayedTaps[TAP_HOLD_BUFFER];
+extern uint32_t delayedUps[TAP_HOLD_BUFFER];
 extern uint8_t sentHelds[TAP_HOLD_BUFFER];
 extern uint8_t tapCount;
+extern uint8_t upCount;
+extern uint8_t delayTaps;
 int8_t findTapCode(KEY_HANDLER *tap);
 uint8_t isModifier(KEY_HANDLER *key);
+uint8_t find_hold(KEY_HANDLER *hold);
+
 
 #define MILLIS esp_timer_get_time() / 1000
 
@@ -63,55 +69,40 @@ uint8_t isModifier(KEY_HANDLER *key);
   void NAME(uint8_t pressed, uint8_t changed) { \
     int8_t idx = 0; \
     if (pressed) { \
-      idx = findTapCode(TAP); \
-      uint32_t tapInterval = MILLIS - holdStart[idx]; \
       uint8_t ismod = isModifier(HOLD); \
-      if (idx == -1) { \
-        idx = findTapCode(0); \
-        tapCodes[idx] = TAP; \
+      if (changed) { \
+        idx = find_hold(0); \
+        holdCodes[idx] = HOLD; \
         holdStart[idx] = MILLIS; \
         sentHelds[idx] = 0; \
-        tapCount = 0; \
-        ESP_LOGI("KEYDEF", "%s hold init %s at %p[%d]: %p %d", #NAME, #HOLD, tapCodes, idx, tapCodes[idx], holdStart[idx]); \
-      } \
-      if (ismod || (tapInterval > TAP_HOLD_THRESHOLD) || tapCount) { \
-        /* setting modifiers */ \
-        if (!sentHelds[idx]) { \
-          ESP_LOGI("KEYDEF", "%s hold start %s at %d", #NAME, #HOLD, idx); \
-          sentHelds[idx] = 1; \
-          HOLD(pressed, true); \
-        } else { \
-          /* ESP_LOGI("KEYDEF", "hold continue %p", hold); */ \
-          HOLD(pressed, false); \
+        delayTaps = true; \
+        ESP_LOGI("KEYDEF", "%s hold init %s", #NAME, #HOLD); \
+      } else { \
+        idx = find_hold(HOLD); \
+        uint32_t tapInterval = MILLIS - holdStart[idx]; \
+        if (tapInterval > TAP_HOLD_THRESHOLD && !sentHelds[idx]) { \
+          ESP_LOGI("KEYDEF", "%s hold start %s", #NAME, #HOLD); \
+          HOLD(true, true); \
+          delayTaps = false; \
+          send_delayed_taps(); \
+          sentHelds[idx] = true; \
         } \
       } \
     } else if (changed) {  \
-      idx = findTapCode(TAP); \
+      delayTaps = false; \
+      idx = find_hold(HOLD); \
       uint32_t tapInterval = MILLIS - holdStart[idx]; \
-      if (idx == -1) { \
-        ESP_LOGE("KEYDEF", "%s RELEASED NON-REGISTERED TAP: %s (%p)", #NAME, #TAP, TAP); \
-      } \
-      if (tapInterval < TAP_HOLD_THRESHOLD * 4 && !tapCount) { \
-        ESP_LOGI("KEYDEF", "%s HOLD RESET: no taps in TAP_HOLD_THRESHOLD*4", #NAME); \
-        tapInterval = TAP_HOLD_THRESHOLD - 1; \
-        if (sentHelds[idx]) { \
-          HOLD(false, true); \
-        } \
-      } \
-      \
       if (tapInterval < TAP_HOLD_THRESHOLD) { \
-        ESP_LOGI("KEYDEF", "%s tapped %s at %d", #NAME, #TAP, idx); \
-        tapCodes[idx] = 0; \
+        ESP_LOGI("KEYDEF", "%s tapped %s", #NAME, #TAP); \
         TAP(true, true); \
         TAP(false, true); \
+        upCount--; \
+        send_delayed_taps(); \
       } else { \
         ESP_LOGI("KEYDEF", "%s held %s at %d", #NAME, #HOLD, idx); \
-        if (!sentHelds[idx]) { \
-          HOLD(true, true); \
-        } \
         HOLD(false, true); \
-        tapCodes[idx] = 0; \
       } \
+      holdCodes[idx] = 0; \
     } \
   }
 
